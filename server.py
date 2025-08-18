@@ -1,7 +1,6 @@
 import socket
 import threading
 
-# Server setup
 HOST = "127.0.0.1"  # localhost
 PORT = 12345
 
@@ -9,11 +8,10 @@ server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.bind((HOST, PORT))
 server.listen()
 
-clients = []  # to store connected clients
+clients = [] # clients ka array 
 
 
 def broadcast(message, conn):
-    """Send message to all clients except the sender"""
     for client in clients:
         if client != conn:
             try:
@@ -23,7 +21,6 @@ def broadcast(message, conn):
 
 
 def handle_client(conn, addr):
-    """Handle communication with one client"""
     print(f"New connection: {addr}")
     while True:
         try:
