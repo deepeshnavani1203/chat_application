@@ -8,7 +8,7 @@ server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.bind((HOST, PORT))
 server.listen()
 
-clients = [] # clients ka array 
+clients = []  # clients ka array
 
 
 def broadcast(message, conn):
