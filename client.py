@@ -1,5 +1,6 @@
 import socket
 import threading
+import os
 
 HOST = "127.0.0.1"
 PORT = 12345
@@ -7,26 +8,37 @@ PORT = 12345
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((HOST, PORT))
 
-# Enter username
-username = input("Enter your username: ")
-client.send(username.encode("utf-8"))
+username = input("Enter username: ")
+client.send(username.encode())
 
 
-def receive_messages():
+def receive():
     while True:
         try:
-            msg = client.recv(1024).decode("utf-8")
-            print(msg)
+            msg = client.recv(1024)
+
+            if msg == b"FILE":
+                data = client.recv(999999)
+                with open("received_file", "wb") as f:
+                    f.write(data)
+                print("File received!")
+            else:
+                print(msg.decode())
+
         except:
-            print("Disconnected from server")
             break
 
 
-def send_messages():
+def send():
     while True:
-        msg = input("")
-        client.send(msg.encode("utf-8"))
+        msg = input()
+
+        if msg:
+            if msg != "/typing":
+                client.send(msg.encode())
+            else:
+                client.send("/typing".encode())
 
 
-threading.Thread(target=receive_messages, daemon=True).start()
-send_messages()
+threading.Thread(target=receive, daemon=True).start()
+send()
