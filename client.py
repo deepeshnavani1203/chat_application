@@ -7,6 +7,10 @@ PORT = 12345
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((HOST, PORT))
 
+# Enter username
+username = input("Enter your username: ")
+client.send(username.encode("utf-8"))
+
 
 def receive_messages():
     while True:
@@ -25,5 +29,4 @@ def send_messages():
 
 
 threading.Thread(target=receive_messages, daemon=True).start()
-
 send_messages()
