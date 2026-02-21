@@ -3,7 +3,7 @@ import threading
 import os
 import struct
 
-HOST = "10.60.123.34"  # CHANGE THIS TO SERVER IP
+HOST = "10.60.123.34"  # CHANGE THIS
 PORT = 12345
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

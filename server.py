@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 import struct
 
-HOST = "0.0.0.0"  # CHANGE FOR LAN
+HOST = "0.0.0.0"
 PORT = 12345
 
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -18,11 +18,13 @@ rooms = {}
 user_room = {}
 muted = set()
 history = []
-
-ADMIN = "admin"
+admin_conn = None
 
 COLORS = ["\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[95m", "\033[96m"]
 RESET = "\033[0m"
+
+server_ip = socket.gethostbyname(socket.gethostname())
+admin_assigned = False
 
 
 def timestamp():
@@ -45,7 +47,6 @@ def send_history(conn):
         conn.send((m + "\n").encode())
 
 
-# 🔥 FILE RECEIVE + FORWARD
 def receive_file(conn, sender):
     filename = conn.recv(1024).decode()
     filesize = struct.unpack("!I", conn.recv(4))[0]
@@ -71,12 +72,22 @@ def receive_file(conn, sender):
 
 
 def handle_client(conn, addr):
+
+    global admin_conn
+    global admin_assigned
+
     print("Connected:", addr)
 
     username = conn.recv(1024).decode()
     color = random.choice(COLORS)
     usernames[conn] = f"{color}{username}{RESET}"
     user_room[conn] = "general"
+
+    # 👑 ADMIN LOGIC
+    if addr[0] == server_ip and not admin_assigned:
+        admin_conn = conn
+        admin_assigned = True
+        conn.send("You are ADMIN\n".encode())
 
     if "general" not in rooms:
         rooms["general"] = []
@@ -122,20 +133,30 @@ def handle_client(conn, addr):
                 elif cmd == "/typing":
                     broadcast(f"{username} is typing...\n", user_room[conn], conn)
 
-                elif cmd == "/kick" and username == ADMIN:
+                elif cmd == "/kick":
+                    if conn != admin_conn:
+                        conn.send("Only Server Admin can kick\n".encode())
+                        continue
                     target = parts[1]
                     for c, u in usernames.items():
                         if target in u:
                             c.send("You were kicked!\n".encode())
                             c.close()
 
-                elif cmd == "/mute" and username == ADMIN:
+                elif cmd == "/mute":
+                    if conn != admin_conn:
+                        conn.send("Only Server Admin can mute\n".encode())
+                        continue
                     target = parts[1]
                     for c, u in usernames.items():
                         if target in u:
                             muted.add(c)
 
                 elif cmd == "/sendfile":
+                    room = user_room.get(conn)
+                    if room is None or room == "general":
+                        conn.send("Error: Join a custom room to send file!\n".encode())
+                        continue
                     receive_file(conn, username)
 
                 continue
