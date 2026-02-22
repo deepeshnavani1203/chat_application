@@ -1,0 +1,211 @@
+================================================================
+        PyChat — How It Works & Complete Features Reference
+================================================================
+
+
+----------------------------------------------------------------
+FEATURES LIST
+----------------------------------------------------------------
+
+CHAT
+  ✓ Multi-user real-time chat
+  ✓ Multiple rooms (unlimited, created on the fly)
+  ✓ Private DM messaging between any two users
+  ✓ Join/leave notifications in rooms
+  ✓ See who is online (/who)
+  ✓ See all active rooms (/rooms)
+
+FILE TRANSFER
+  ✓ Send any file type to everyone in a room
+  ✓ GUI file picker (no need to type file paths)
+  ✓ Receiver gets name, size, sender info before accepting
+  ✓ Accept (y) or Reject (n) per transfer
+  ✓ Progress shown while sending and receiving
+  ✓ File saved automatically as "received_<filename>"
+  ✗ File transfer blocked in "general" room (by design)
+
+ADMIN SYSTEM
+  ✓ First connected user = admin automatically
+  ✓ Admin can kick any user
+  ✓ Kicked user gets a warning message before disconnect
+  ✓ Room gets notified when someone is kicked
+  ✓ Auto-promotion: next user becomes admin if admin leaves
+
+STABILITY
+  ✓ Chat and file transfer use completely separate TCP ports
+  ✓ File accept prompt appears immediately (not on Ctrl+C)
+  ✓ Graceful disconnect handling
+  ✓ Server keeps running if any client crashes
+
+
+----------------------------------------------------------------
+HOW IT WORKS — ARCHITECTURE
+----------------------------------------------------------------
+
+The app has two parts:
+  server.py  →  runs once, on the host machine
+  client.py  →  runs on every user's machine
+
+
+TWO SEPARATE TCP CONNECTIONS
+─────────────────────────────
+Most chat apps mix chat and file data on one connection.
+This causes "stream mixing" bugs where file bytes get
+interpreted as text. PyChat solves this by using two ports:
+
+  Port 12345  →  CHAT CONNECTION (stays open the whole time)
+                 All text messages, room events, DMs,
+                 file notifications go through here.
+
+  Port 12346  →  FILE CONNECTION (opens and closes per transfer)
+                 Only raw file data travels here.
+                 One short-lived connection per file send.
+
+
+HOW A MESSAGE IS SENT
+──────────────────────
+  1. You type a message and press Enter
+  2. Client encodes it with a 2-byte length prefix
+     (so server knows exactly how many bytes to read)
+  3. Server receives it, looks up your room
+  4. Server sends it to every other client in the same room
+  5. Their receive() thread picks it up and prints it
+
+  Format on the wire:
+    [ 2 bytes: message length ] [ N bytes: message text ]
+
+
+HOW ROOMS WORK
+───────────────
+  Rooms are not created in advance. When you type:
+    /join gaming
+
+  The server just updates a dictionary:
+    user_rooms["Alice"] = "gaming"
+
+  When broadcasting, server filters:
+    "only send to users where user_rooms[u] == current_room"
+
+  So rooms are just labels. Anyone can create one instantly.
+  A room "disappears" when no one is in it anymore.
+
+
+HOW DMs WORK
+─────────────
+  When you type:
+    /dm Bob Hey!
+
+  Client sends this string to the server like a normal message.
+  Server detects it starts with "/dm", extracts the target name,
+  looks up Bob's socket directly, and sends only to him.
+  No one else in the room sees it.
+
+
+HOW FILE TRANSFER WORKS (step by step)
+────────────────────────────────────────
+
+  SENDER SIDE:
+  1. You type /sendfile
+  2. GUI file picker opens
+  3. You select a file
+  4. Client opens a NEW connection to port 12346
+  5. Sends: tag "S" | your username | room | filename | filesize
+  6. Server checks: is room == "general"? → sends "NO" and stops
+  7. Server sends "OK" → client streams the file in 4096-byte chunks
+  8. Server buffers the ENTIRE file in memory before telling anyone
+     (this prevents the receiver getting half a file)
+
+  SERVER SIDE (after receiving full file):
+  9. Server creates a unique Transfer ID (UUID)
+  10. Builds a FILE_OFFER notification packet
+  11. Sends FILE_OFFER to every room member (except sender)
+      via their CHAT socket (port 12345)
+  12. Server waits up to 120 seconds for each receiver to respond
+
+  RECEIVER SIDE:
+  13. receive() thread gets FILE_OFFER on the chat socket
+  14. Prints the notification (sender, filename, size)
+  15. Puts offer into a queue — NEVER calls input() directly
+      (this is the fix for the "prompt only appears on Ctrl+C" bug)
+  16. Main input loop picks it up, user types y or n
+  17. Client opens a NEW connection to port 12346
+  18. Sends: tag "R" | transfer ID | username | Y or N
+  19. Server receives the decision
+
+  DELIVERY:
+  20. For each user who said Y:
+      Server sends FILEDATA header + file bytes over their CHAT socket
+  21. receiver() thread reads FILEDATA, writes to disk as "received_<filename>"
+  22. Done. Transfer connection closes.
+
+
+WHY THE ACCEPT PROMPT BROKE BEFORE (and how it's fixed)
+─────────────────────────────────────────────────────────
+  OLD BUG:
+    Python's input() exclusively owns stdin.
+    Only ONE thread can call input() at a time.
+    The receive() thread was calling input("Accept? y/n")
+    while the main thread was ALSO blocked on input().
+    The receive thread's call was silently queued and
+    only ran when Ctrl+C forced the main thread to exit
+    its input() call. That's why you only saw the prompt on quit.
+
+  THE FIX:
+    receive() thread NEVER calls input().
+    It just prints the notification and drops the offer
+    into a thread-safe Queue.
+    The main thread is the SOLE owner of stdin.
+    Before every input() call, it checks the queue.
+    If an offer is pending, the next thing you type
+    (y, n, /accept, /reject) is treated as the answer.
+    This means zero thread conflicts.
+
+
+HOW ADMIN WORKS
+────────────────
+  The server keeps a global variable: admin = None
+
+  When the first client connects:
+    if not clients:         ← no one connected yet
+        admin = username    ← this person is admin
+
+  When /kick is received:
+    if username != admin: → send "Only admin can kick"
+    else: force-close target's socket
+
+  When admin disconnects:
+    if username == admin and clients:
+        admin = next(iter(clients))   ← next person in line
+        notify them: "You are now admin"
+
+
+HOW THE SERVER HANDLES MULTIPLE USERS
+───────────────────────────────────────
+  For every client that connects, the server spawns a new thread:
+
+    threading.Thread(target=handle_chat_client, args=(conn, addr))
+
+  So if 10 people are connected, there are 10 threads running,
+  each independently reading from its own socket.
+
+  Shared data (clients dict, user_rooms dict) is protected
+  with a threading.Lock() to prevent race conditions.
+
+
+----------------------------------------------------------------
+TECHNICAL SUMMARY
+----------------------------------------------------------------
+
+Language       Python 3.7+
+Libraries      socket, threading, struct, uuid, tkinter, queue, os
+Protocol       Raw TCP (no HTTP, no WebSocket)
+Message format Length-prefixed binary (2-byte big-endian header)
+File format    Tag byte + length-prefixed strings + 4-byte size + raw bytes
+Ports          12345 (chat), 12346 (file transfer)
+Threading      1 thread per client (chat) + 1 thread per file transfer
+Admin          First-connect, auto-promoted on leave
+Rooms          Dynamic, label-based, no pre-creation needed
+File limit     ~4 GB (filesize stored in 4-byte unsigned int)
+File save path Same directory as client.py, prefixed with "received_"
+
+================================================================
