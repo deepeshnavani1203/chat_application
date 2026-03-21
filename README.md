@@ -1,4 +1,4 @@
-# 💬 PyChat — Python Terminal Chat App
+# 💬 TermiTalk — Python Terminal Chat App
 
 A simple but powerful **terminal-based chat application** built with Python.  
 Supports multiple rooms, private messages, file transfers, and admin controls — all over raw TCP sockets.
